@@ -1,6 +1,7 @@
 package akka.kamon.instrumentation
 
 import akka.actor.{ Cell, ActorRef, ActorSystem }
+import akka.dispatch.Envelope
 import akka.kamon.instrumentation.ActorMonitors.{ TrackedRoutee, TrackedActor }
 import kamon.Kamon
 import kamon.akka.{ RouterMetrics, ActorMetrics }
@@ -11,7 +12,7 @@ import org.aspectj.lang.ProceedingJoinPoint
 
 trait ActorMonitor {
   def captureEnvelopeContext(): EnvelopeContext
-  def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef
+  def processMessage(pjp: ProceedingJoinPoint, envelope: Envelope): AnyRef
   def processFailure(failure: Throwable): Unit
   def cleanup(): Unit
 }
@@ -54,7 +55,8 @@ object ActorMonitors {
     def captureEnvelopeContext(): EnvelopeContext =
       EnvelopeContext(RelativeNanoTimestamp.now, Tracer.currentContext)
 
-    def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = {
+    def processMessage(pjp: ProceedingJoinPoint, envelope: Envelope): AnyRef = {
+      val envelopeContext = envelope.asInstanceOf[InstrumentedEnvelope].envelopeContext()
       Tracer.withContext(envelopeContext.context) {
         pjp.proceed()
       }
@@ -71,7 +73,8 @@ object ActorMonitors {
       EnvelopeContext(RelativeNanoTimestamp.now, Tracer.currentContext)
     }
 
-    def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = {
+    def processMessage(pjp: ProceedingJoinPoint, envelope: Envelope): AnyRef = {
+      val envelopeContext = envelope.asInstanceOf[InstrumentedEnvelope].envelopeContext()
       val timestampBeforeProcessing = RelativeNanoTimestamp.now
 
       try {
@@ -85,6 +88,11 @@ object ActorMonitors {
         val processingTime = timestampAfterProcessing - timestampBeforeProcessing
 
         actorMetrics.processingTime.record(processingTime.nanos)
+        val name = envelope.message match {
+          case p: Product ⇒ p.productPrefix
+          case x          ⇒ x.getClass.getSimpleName
+        }
+        actorMetrics.processingTimeForType(name).record(processingTime.nanos)
         actorMetrics.timeInMailbox.record(timeInMailbox.nanos)
         actorMetrics.mailboxSize.decrement()
       }
@@ -98,7 +106,8 @@ object ActorMonitors {
     def captureEnvelopeContext(): EnvelopeContext =
       EnvelopeContext(RelativeNanoTimestamp.now, Tracer.currentContext)
 
-    def processMessage(pjp: ProceedingJoinPoint, envelopeContext: EnvelopeContext): AnyRef = {
+    def processMessage(pjp: ProceedingJoinPoint, envelope: Envelope): AnyRef = {
+      val envelopeContext = envelope.asInstanceOf[InstrumentedEnvelope].envelopeContext()
       val timestampBeforeProcessing = RelativeNanoTimestamp.now
 
       try {

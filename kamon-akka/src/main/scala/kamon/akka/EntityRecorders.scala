@@ -15,8 +15,12 @@
  */
 package kamon.akka
 
+import java.util.concurrent.atomic.AtomicReference
+
 import kamon.metric._
-import kamon.metric.instrument.{ Time, InstrumentFactory }
+import kamon.metric.instrument.{ Histogram, Time, InstrumentFactory }
+
+import scala.annotation.tailrec
 
 /**
  *
@@ -33,6 +37,23 @@ class ActorMetrics(instrumentFactory: InstrumentFactory) extends GenericEntityRe
   val processingTime = histogram("processing-time", Time.Nanoseconds)
   val mailboxSize = minMaxCounter("mailbox-size")
   val errors = counter("errors")
+
+  private val tpes = new AtomicReference[Map[String, Histogram]](Map.empty)
+  def processingTimeForType(tpe: String): Histogram =
+    tpes.get.get(tpe) match {
+      case Some(histo) ⇒ histo
+      case None ⇒
+        val newHisto = histogram("processing-time." + tpe, Time.Nanoseconds)
+
+        @tailrec def add(): Unit = {
+          val old = tpes.get
+          if (!tpes.compareAndSet(old, old + (tpe -> newHisto)))
+            add()
+        }
+
+        add()
+        newHisto
+    }
 }
 
 object ActorMetrics extends EntityRecorderFactoryCompanion[ActorMetrics]("akka-actor", new ActorMetrics(_))
